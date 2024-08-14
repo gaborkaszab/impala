@@ -162,6 +162,8 @@ import org.apache.thrift.TException;
 import org.apache.thrift.TSerializer;
 import org.apache.thrift.protocol.TBinaryProtocol;
 import org.apache.thrift.transport.TTransportException;
+import org.ehcache.sizeof.SizeOf;
+import org.github.jamm.MemoryMeter;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -2585,6 +2587,45 @@ public class CatalogServiceCatalog extends Catalog {
       catalogTimeline.markEvent("Async loaded table");
       // The table may have been dropped/modified while the load was in progress, so only
       // apply the update if the existing table hasn't changed.
+
+      // TODO: gaborkaszab: can check memory footprints here
+      // ======================
+      final boolean BYPASS_FLYWEIGHT = true;
+      final boolean CACHE_SIZES = true;
+      SizeOf SIZEOF = SizeOf.newInstance(BYPASS_FLYWEIGHT, CACHE_SIZES);
+      //LOG.info("gaborkaszab: Table size: (SizeOf) " + t.getName() + " " + SIZEOF.deepSizeOf(t));
+      if (t instanceof IcebergTable) {
+        IcebergTable iceT = (IcebergTable) t;
+
+        long fdSizeTotal = iceT.getHdfsTable().partitionMap_.values().stream()
+            .mapToLong(part -> SIZEOF.deepSizeOf(part.encodedFileDescriptors_)).sum();
+        long iceFDMetadata = iceT.getContentFileStore().dataFilesWithoutDeletes_.fileDescMap_.values().stream()
+                .mapToLong(fd -> SIZEOF.deepSizeOf(fd.fileMetadata_)).sum();
+        long fdMetadata = iceT.getContentFileStore().dataFilesWithoutDeletes_.fileDescMap_.values().stream()
+            .mapToLong(fd -> SIZEOF.deepSizeOf(fd.fileDesc_)).sum();
+        long encodedFDSize = iceT.getContentFileStore().dataFilesWithoutDeletes_.fileDescMap_.values().stream()
+            .mapToLong(fd -> SIZEOF.deepSizeOf(fd)).sum();
+        long fdPaths = iceT.getContentFileStore().dataFilesWithoutDeletes_.fileDescMap_.keySet().stream()
+            .mapToLong(str -> SIZEOF.deepSizeOf(str)).sum();
+        LOG.info("gaborkaszab: IcebergTable: " + SIZEOF.deepSizeOf(iceT) +
+            " ContentFileStore: " + SIZEOF.deepSizeOf(iceT.getContentFileStore()) +
+            " ContentFileStore EncodedFD: " + encodedFDSize +
+            " ContentFileStore Hdfs metadata: " + fdMetadata +
+            " ContentFileStore Iceberg metadata: " + iceFDMetadata +
+            " ContentFileStore path strings: " + fdPaths +
+            " ContentFileStore dataFiles MapList " + SIZEOF.deepSizeOf(iceT.getContentFileStore().dataFilesWithoutDeletes_) +
+            " FDs in HdfsTable: " + fdSizeTotal +
+            " HdfsTable: " + SIZEOF.deepSizeOf(iceT.getHdfsTable()) +
+            " BaseTable: " + SIZEOF.deepSizeOf(iceT.getIcebergApiTable()));
+      } /*else if (t instanceof HdfsTable) {
+        HdfsTable hT = (HdfsTable) t;
+        long fdSizeTotal = hT.partitionMap_.values().stream()
+                .mapToLong(part -> SIZEOF.deepSizeOf(part.encodedFileDescriptors_)).sum();
+        LOG.info("gaborkaszab: HdfsTable: " + SIZEOF.deepSizeOf(hT) +
+            " File descriptors: " + fdSizeTotal +
+            " GroupedContentFiles: " + SIZEOF.deepSizeOf(hT.icebergFiles_));
+      }*/
+
       return replaceTableIfUnchanged(t, previousCatalogVersion, tableId);
     } finally {
       loadReq.close();
