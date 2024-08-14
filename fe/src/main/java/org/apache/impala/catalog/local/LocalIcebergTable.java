@@ -59,7 +59,7 @@ import org.apache.log4j.Logger;
  */
 public class LocalIcebergTable extends LocalTable implements FeIcebergTable {
   private static final Logger LOG = Logger.getLogger(LocalIcebergTable.class);
-  private TableParams tableParams_;
+  public TableParams tableParams_;
   private TIcebergFileFormat icebergFileFormat_;
   private TCompressionCodec icebergParquetCompressionCodec_;
   private long icebergParquetRowGroupSize_;

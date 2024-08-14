@@ -30,25 +30,7 @@ import org.apache.hadoop.hive.metastore.api.ColumnStatisticsObj;
 import org.apache.hadoop.hive.metastore.api.PrincipalType;
 import org.apache.hadoop.hive.metastore.api.Table;
 import org.apache.impala.analysis.TableName;
-import org.apache.impala.catalog.ArrayType;
-import org.apache.impala.catalog.Column;
-import org.apache.impala.catalog.DataSourceTable;
-import org.apache.impala.catalog.FeCatalogUtils;
-import org.apache.impala.catalog.FeDb;
-import org.apache.impala.catalog.FeTable;
-import org.apache.impala.catalog.HBaseTable;
-import org.apache.impala.catalog.HdfsFileFormat;
-import org.apache.impala.catalog.IcebergColumn;
-import org.apache.impala.catalog.IcebergStructField;
-import org.apache.impala.catalog.IcebergTable;
-import org.apache.impala.catalog.KuduTable;
-import org.apache.impala.catalog.SideloadTableStats;
-import org.apache.impala.catalog.SqlConstraints;
-import org.apache.impala.catalog.StructField;
-import org.apache.impala.catalog.StructType;
-import org.apache.impala.catalog.SystemTable;
-import org.apache.impala.catalog.TableLoadingException;
-import org.apache.impala.catalog.VirtualColumn;
+import org.apache.impala.catalog.*;
 import org.apache.impala.catalog.local.MetaProvider.TableMetaRef;
 import org.apache.impala.common.Pair;
 import org.apache.impala.common.RuntimeEnv;
@@ -59,6 +41,11 @@ import org.apache.impala.thrift.TImpalaTableType;
 import org.apache.impala.thrift.TTableStats;
 import org.apache.impala.util.AcidUtils;
 import org.apache.thrift.TException;
+
+import org.ehcache.sizeof.SizeOf;
+import org.apache.iceberg.BaseTable;
+import org.apache.iceberg.metrics.LoggingMetricsReporter;
+import org.apache.iceberg.hadoop.HadoopTableOperations;
 
 import com.google.common.base.Preconditions;
 import com.google.common.collect.ImmutableList;
@@ -142,6 +129,29 @@ abstract class LocalTable implements FeTable {
     if (t == null) {
       throw new LocalCatalogException("Unknown table type for table " +
           db.getName() + "." + msTbl.getTableName());
+    }
+
+    // TODO gaborkaszab: do experiments on Java object sizes
+    final boolean BYPASS_FLYWEIGHT = true;
+    final boolean CACHE_SIZES = true;
+    final SizeOf SIZEOF = SizeOf.newInstance(BYPASS_FLYWEIGHT, CACHE_SIZES);
+    if (t instanceof LocalIcebergTable) {
+      LocalIcebergTable iceT = (LocalIcebergTable) t;
+
+      BaseTable baseTable = (BaseTable) iceT.getIcebergApiTable();
+      //Preconditions.checkState(baseTable.operations() instanceof HadoopTableOperations);
+      //HadoopTableOperations tblOps = (HadoopTableOperations)(baseTable.operations());
+
+      LOG.info("Table size for: " + iceT.getTableName() +
+          " sizeIceT: " + SIZEOF.deepSizeOf(iceT) +
+          " sizeContentFileStore: " + SIZEOF.deepSizeOf(iceT.getContentFileStore()) +
+          " sizeTableParams: " + SIZEOF.deepSizeOf(iceT.tableParams_) +
+          " sizeLocalFsTable: " + SIZEOF.deepSizeOf(iceT.getFeFsTable()) +
+          " sizeBaseTable: " + SIZEOF.deepSizeOf(baseTable) +
+          " sizeTblOps: " + SIZEOF.deepSizeOf(baseTable.operations()));
+    } else {
+      LOG.info("Table size for: " + t.getTableName() +
+          " size: " + SIZEOF.deepSizeOf(t));
     }
 
     // TODO(todd): it would be preferable to only load stats for those columns
