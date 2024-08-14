@@ -142,6 +142,12 @@ import com.google.common.util.concurrent.Uninterruptibles;
 import com.google.errorprone.annotations.Immutable;
 import com.google.errorprone.annotations.concurrent.GuardedBy;
 
+import org.apache.iceberg.BaseTable;
+import org.apache.iceberg.metrics.LoggingMetricsReporter;
+import org.apache.iceberg.hadoop.HadoopTableOperations;
+import org.apache.iceberg.io.FileIO;
+import org.apache.iceberg.ManifestFile;
+
 /**
  * MetaProvider which fetches metadata in a granular fashion from the catalogd.
  *
@@ -2284,6 +2290,47 @@ public class CatalogdMetaProvider implements MetaProvider {
 
     @Override
     public int weigh(Object key, Object value) {
+      if (value instanceof BaseTable) {
+        // TODO gaborkaszab: check here if different Iceberg base tables share the FileIO or not.
+        BaseTable bt = (BaseTable)value;
+        List<ManifestFile> manifests = bt.operations().current().currentSnapshot().allManifests(bt.io());
+        FileIO fileIO = bt.io();
+
+        List<org.apache.iceberg.Snapshot> snapshots = bt.operations().current().snapshots();
+        org.apache.iceberg.Snapshot lastSnapshot = snapshots.get(snapshots.size() - 1);
+        ManifestFile lastManifest = manifests.get(manifests.size() - 1);
+
+        //snapshots.get(snapshots.size() - 2).allManifests(bt.io());
+        //snapshots.get(snapshots.size() - 3).allManifests(bt.io());
+        //snapshots.get(snapshots.size() - 4).allManifests(bt.io());
+        // Touch all the manifests to load them into mem
+        //snapshots.forEach(snap -> snap.allManifests(bt.io()));
+
+        LOG.info("gaborkaszab: BaseTable: " + bt.name() +
+            " BaseTable size: " + SIZEOF.deepSizeOf(bt) +
+            " FileIO objectID: " + fileIO +
+            " FileIO size: " + SIZEOF.deepSizeOf(fileIO));
+
+
+        LOG.info("gaborkaszab: BasteTable: " + bt.name() +
+            " number of manifests: " + manifests.size() +
+            " all manifests size: " + SIZEOF.deepSizeOf(manifests) +
+            " (last) ManifestFile size: " + SIZEOF.deepSizeOf(lastManifest) +
+            " number of snapshots: " + snapshots.size() +
+            " all snapshots size: " + SIZEOF.deepSizeOf(snapshots) +
+            " (last) snapshot size: " + SIZEOF.deepSizeOf(lastSnapshot) +
+            " avro schema size: " + SIZEOF.deepSizeOf(ManifestFile.schema()) +
+            " snapshot log size: " + SIZEOF.deepSizeOf(bt.operations().current().snapshotLog()) +
+            " metadata log size: " + SIZEOF.deepSizeOf(bt.operations().current().previousFiles())
+        );
+      }
+
+      if (value instanceof PartitionMetadataImpl) {
+        PartitionMetadataImpl partImpl = (PartitionMetadataImpl)value;
+        LOG.info("gaborkaszab: PartitionMetadataImpl size " + SIZEOF.deepSizeOf(partImpl));
+      }
+
+
       long size = OVERHEAD_PER_ENTRY;
       try {
         if (useJamm_) {
@@ -2306,6 +2353,9 @@ public class CatalogdMetaProvider implements MetaProvider {
       if (size > Integer.MAX_VALUE) {
         return Integer.MAX_VALUE;
       }
+      // TODO gaborkaszab: another way to measure object size:
+      LOG.info("gaborkaszab: weigh={}, keyClass={}, valueClass={}", size, key.getClass(), value.getClass());
+
       return (int)size;
     }
   }

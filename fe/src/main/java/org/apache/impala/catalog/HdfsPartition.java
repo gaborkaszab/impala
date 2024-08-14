@@ -208,7 +208,7 @@ public class HdfsPartition extends CatalogObjectImpl implements FeFsPartition {
    *    - 4-byte padding (objects are word-aligned)
    */
   @Nonnull
-  private final ImmutableList<byte[]> encodedFileDescriptors_;
+  public final ImmutableList<byte[]> encodedFileDescriptors_;
   private final ImmutableList<byte[]> encodedInsertFileDescriptors_;
   private final ImmutableList<byte[]> encodedDeleteFileDescriptors_;
   private final HdfsPartitionLocationCompressor.Location location_;
