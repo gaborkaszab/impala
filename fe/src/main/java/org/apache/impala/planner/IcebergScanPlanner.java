@@ -43,6 +43,9 @@ import org.apache.iceberg.expressions.ExpressionUtil;
 import org.apache.iceberg.expressions.ExpressionVisitors;
 import org.apache.iceberg.expressions.True;
 import org.apache.iceberg.io.CloseableIterable;
+import org.apache.iceberg.metrics.MetricsReport;
+import org.apache.iceberg.metrics.MetricsReporter;
+import org.apache.iceberg.metrics.ScanReport;
 import org.apache.impala.analysis.Analyzer;
 import org.apache.impala.analysis.BinaryPredicate;
 import org.apache.impala.analysis.BinaryPredicate.Operator;
@@ -92,6 +95,24 @@ import org.slf4j.LoggerFactory;
  * class deals with such complexities.
  */
 public class IcebergScanPlanner {
+
+  // This is available in a later Iceberg release. We could drop this and use the one from
+  // Iceberg once we've done a version bump;
+  private static class InMemoryMetricsReporter implements MetricsReporter {
+    private MetricsReport metricsReport;
+
+    @Override
+    public void report(MetricsReport report) { this.metricsReport = report; }
+
+    public ScanReport scanReport() {
+      Preconditions.checkArgument(
+          metricsReport == null || metricsReport instanceof ScanReport,
+          "Metrics report is not a scan report");
+      return (ScanReport) metricsReport;
+    }
+  }
+
+
   private static final Logger LOG = LoggerFactory.getLogger(IcebergScanPlanner.class);
 
   private Analyzer analyzer_;
@@ -136,6 +157,8 @@ public class IcebergScanPlanner {
 
   private final long snapshotId_;
 
+  private final InMemoryMetricsReporter metricsReporter_ = new InMemoryMetricsReporter();
+
   public IcebergScanPlanner(Analyzer analyzer, PlannerContext ctx,
       TableRef iceTblRef, List<Expr> conjuncts, MultiAggregateInfo aggInfo)
       throws ImpalaException {
@@ -152,6 +175,7 @@ public class IcebergScanPlanner {
 
   public PlanNode createIcebergScanPlan() throws ImpalaException {
     if (!needIcebergForPlanning()) {
+      // TODO update the profile that there is a full scan without planning with Iceberg
       analyzer_.materializeSlots(conjuncts_);
       setFileDescriptorsBasedOnFileStore();
       return createIcebergScanPlanImpl();
@@ -551,8 +575,11 @@ public class IcebergScanPlanner {
     TimeTravelSpec timeTravelSpec = tblRef_.getTimeTravelSpec();
 
     try (CloseableIterable<FileScanTask> fileScanTasks =
-        IcebergUtil.planFiles(getIceTable(),
-            new ArrayList<>(impalaIcebergPredicateMapping_.keySet()), timeTravelSpec)) {
+        IcebergUtil.planFiles(
+            getIceTable(),
+            new ArrayList<>(impalaIcebergPredicateMapping_.keySet()),
+            timeTravelSpec,
+            metricsReporter_)) {
       long dataFilesCacheMisses = 0;
       for (FileScanTask fileScanTask : fileScanTasks) {
         Expression residualExpr = fileScanTask.residual();
@@ -587,6 +614,12 @@ public class IcebergScanPlanner {
           "Failed to load data files for Iceberg table: %s", getIceTable().getFullName()),
           e);
     }
+    // TODO: metricsReporter_ is filled here after the try-with-resources releases the
+    // FileScanTask iterable.
+    ScanReport scanReport = metricsReporter_.scanReport();
+    scanReport.scanMetrics().totalPlanningDuration();
+    // TODO: update the query profile with these numbers.
+
     updateDeleteStatistics();
   }
 
